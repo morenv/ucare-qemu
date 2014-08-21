@@ -3249,6 +3249,41 @@ static int coroutine_fn bdrv_co_do_pwritev(BlockDriverState *bs,
         return -EIO;
     }
 
+    // mvmv
+#ifdef MV_IO_remove
+    if (bs->device_name[7] == '1') { // ide0-hd1
+        //printf("tracked_request_begin: bytes = %u, count_num=%d \n", bytes, 0);
+        //printf("bdrv_co_do_pwritev: offset=%lld, bytes=%u \n", (long long)offset, bytes);
+        if (bytes < 32768) { // 32KB
+           // return 0;
+           return bytes;
+        }        
+    }
+#endif // MV_IO_remove
+
+#ifdef  MV_IO_shelter
+    if (bs->device_name[7] == '1') { // ide0-hd1
+        //printf("tracked_request_begin: bytes = %u, count_num=%d \n", bytes, 0);
+        //printf("bdrv_co_do_pwritev: offset=%lld, bytes=%u \n", (long long)offset, bytes);
+        if (bytes < 32768) { // 32KB
+            static int nfs_disk = -1;
+            static void *fill = NULL; 
+            int err;
+            //printf("tracked_request_begin: bytes = %u, count_num=%d \n", bytes, 0);
+            //printf("bdrv_co_do_pwritev: offset=%lld, bytes=%u \n", (long long)offset, bytes);
+            if (nfs_disk == -1) {
+                nfs_disk = open("/mnt/nfsdisk", O_WRONLY | O_DIRECT | O_SYNC);  
+                if (nfs_disk == -1) fprintf(stderr, "Error opening device: %m\n"); 
+                //fill = malloc(sizeof(8192000));
+                fill = malloc(sizeof(32768));
+            }
+            err = write(nfs_disk, fill, bytes); 
+            if (err == -1) fprintf(stderr, "Error write to NFS: %m\n");
+            return bytes;
+        }        
+    }
+#endif // MV_IO_shelter
+
     /* throttling disk I/O */
     if (bs->io_limits_enabled) {
         bdrv_io_limits_intercept(bs, bytes, true);

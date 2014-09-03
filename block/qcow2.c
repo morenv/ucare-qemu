@@ -58,6 +58,9 @@ typedef struct {
 #define  QCOW2_EXT_MAGIC_BACKING_FORMAT 0xE2792ACA
 #define  QCOW2_EXT_MAGIC_FEATURE_TABLE 0x6803f857
 
+//mvmv
+#include "../shelter_declare.inc.h"
+
 static int qcow2_probe(const uint8_t *buf, int buf_size, const char *filename)
 {
     const QCowHeader *cow_header = (const void *)buf;
@@ -69,7 +72,6 @@ static int qcow2_probe(const uint8_t *buf, int buf_size, const char *filename)
     else
         return 0;
 }
-
 
 /* 
  * read qcow2 extension and fill bs
@@ -457,6 +459,10 @@ static int qcow2_open(BlockDriverState *bs, QDict *options, int flags,
     uint64_t l1_vm_state_index;
     const char *opt_overlap_check;
     int overlap_check_template = 0;
+
+    // mvmv
+    #include "../shelter_init.inc.h"
+    //s->pending_write = 0;
 
     ret = bdrv_pread(bs->file, 0, &header, sizeof(header));
     if (ret < 0) {
@@ -1124,6 +1130,9 @@ static coroutine_fn int qcow2_co_writev(BlockDriverState *bs,
     uint8_t *cluster_data = NULL;
     QCowL2Meta *l2meta = NULL;
 
+    //mvmv
+    #include "../shelter_main.inc.h"
+
     trace_qcow2_writev_start_req(qemu_coroutine_self(), sector_num,
                                  remaining_sectors);
 
@@ -1188,6 +1197,7 @@ static coroutine_fn int qcow2_co_writev(BlockDriverState *bs,
         BLKDBG_EVENT(bs->file, BLKDBG_WRITE_AIO);
         trace_qcow2_writev_data(qemu_coroutine_self(),
                                 (cluster_offset >> 9) + index_in_cluster);
+
         ret = bdrv_co_writev(bs->file,
                              (cluster_offset >> 9) + index_in_cluster,
                              cur_nr_sectors, &hd_qiov);
@@ -1249,6 +1259,10 @@ fail:
 static void qcow2_close(BlockDriverState *bs)
 {
     BDRVQcowState *s = bs->opaque;
+
+    //mvmv
+    #include "../shelter_cleanup.inc.h"
+
     g_free(s->l1_table);
     /* else pre-write overlap checks in cache_destroy may crash */
     s->l1_table = NULL;
@@ -2416,3 +2430,147 @@ static void bdrv_qcow2_init(void)
 }
 
 block_init(bdrv_qcow2_init);
+
+//mvmv
+// copy of qcow2_co_writev() without the sheltering logic
+static coroutine_fn int qcow2_co_commit_writev(BlockDriverState *bs,
+                                               int64_t sector_num,
+                                               int remaining_sectors,
+                                               QEMUIOVector *qiov)
+{
+    BDRVQcowState *s = bs->opaque;
+    int index_in_cluster;
+    int ret;
+    int cur_nr_sectors; /* number of sectors in current iteration */
+    uint64_t cluster_offset;
+    QEMUIOVector hd_qiov;
+    uint64_t bytes_done = 0;
+    uint8_t *cluster_data = NULL;
+    QCowL2Meta *l2meta = NULL;
+
+    //MV_DEBUG_HD1(bs, "%s(dev:%s, sector:%ld, count:%d)\n", __func__, bs->device_name, sector_num, remaining_sectors);
+
+    trace_qcow2_writev_start_req(qemu_coroutine_self(), sector_num,
+                                 remaining_sectors);
+
+    qemu_iovec_init(&hd_qiov, qiov->niov);
+
+    s->cluster_cache_offset = -1; /* disable compressed cache */
+
+    qemu_co_mutex_lock(&s->lock);
+
+    while (remaining_sectors != 0) {
+
+        l2meta = NULL;
+
+        trace_qcow2_writev_start_part(qemu_coroutine_self());
+        index_in_cluster = sector_num & (s->cluster_sectors - 1);
+        cur_nr_sectors = remaining_sectors;
+        if (s->crypt_method &&
+            cur_nr_sectors >
+            QCOW_MAX_CRYPT_CLUSTERS * s->cluster_sectors - index_in_cluster) {
+            cur_nr_sectors =
+                QCOW_MAX_CRYPT_CLUSTERS * s->cluster_sectors - index_in_cluster;
+        }
+
+        ret = qcow2_alloc_cluster_offset(bs, sector_num << 9,
+            &cur_nr_sectors, &cluster_offset, &l2meta);
+        if (ret < 0) {
+            goto fail;
+        }
+
+        assert((cluster_offset & 511) == 0);
+
+        qemu_iovec_reset(&hd_qiov);
+        qemu_iovec_concat(&hd_qiov, qiov, bytes_done,
+            cur_nr_sectors * 512);
+
+        if (s->crypt_method) {
+            if (!cluster_data) {
+                cluster_data = qemu_blockalign(bs, QCOW_MAX_CRYPT_CLUSTERS *
+                                                 s->cluster_size);
+            }
+
+            assert(hd_qiov.size <=
+                   QCOW_MAX_CRYPT_CLUSTERS * s->cluster_size);
+            qemu_iovec_to_buf(&hd_qiov, 0, cluster_data, hd_qiov.size);
+
+            qcow2_encrypt_sectors(s, sector_num, cluster_data,
+                cluster_data, cur_nr_sectors, 1, &s->aes_encrypt_key);
+
+            qemu_iovec_reset(&hd_qiov);
+            qemu_iovec_add(&hd_qiov, cluster_data,
+                cur_nr_sectors * 512);
+        }
+
+        ret = qcow2_pre_write_overlap_check(bs, 0,
+                cluster_offset + index_in_cluster * BDRV_SECTOR_SIZE,
+                cur_nr_sectors * BDRV_SECTOR_SIZE);
+        if (ret < 0) {
+            goto fail;
+        }
+
+        qemu_co_mutex_unlock(&s->lock);
+        BLKDBG_EVENT(bs->file, BLKDBG_WRITE_AIO);
+        trace_qcow2_writev_data(qemu_coroutine_self(),
+                                (cluster_offset >> 9) + index_in_cluster);
+        ret = bdrv_co_writev(bs->file,
+                             (cluster_offset >> 9) + index_in_cluster,
+                             cur_nr_sectors, &hd_qiov);
+        qemu_co_mutex_lock(&s->lock);
+        if (ret < 0) {
+            goto fail;
+        }
+
+        while (l2meta != NULL) {
+            QCowL2Meta *next;
+
+            ret = qcow2_alloc_cluster_link_l2(bs, l2meta);
+            if (ret < 0) {
+                goto fail;
+            }
+
+            /* Take the request off the list of running requests */
+            if (l2meta->nb_clusters != 0) {
+                QLIST_REMOVE(l2meta, next_in_flight);
+            }
+
+            qemu_co_queue_restart_all(&l2meta->dependent_requests);
+
+            next = l2meta->next;
+            g_free(l2meta);
+            l2meta = next;
+        }
+
+        remaining_sectors -= cur_nr_sectors;
+        sector_num += cur_nr_sectors;
+        bytes_done += cur_nr_sectors * 512;
+        trace_qcow2_writev_done_part(qemu_coroutine_self(), cur_nr_sectors);
+    }
+    ret = 0;
+
+fail:
+    qemu_co_mutex_unlock(&s->lock);
+
+    while (l2meta != NULL) {
+        QCowL2Meta *next;
+
+        if (l2meta->nb_clusters != 0) {
+            QLIST_REMOVE(l2meta, next_in_flight);
+        }
+        qemu_co_queue_restart_all(&l2meta->dependent_requests);
+
+        next = l2meta->next;
+        g_free(l2meta);
+        l2meta = next;
+    }
+
+    qemu_iovec_destroy(&hd_qiov);
+    qemu_vfree(cluster_data);
+    trace_qcow2_writev_done_req(qemu_coroutine_self(), ret);
+
+    return ret;
+}
+
+// mvmv
+#include "../shelter_functions.inc.h"

@@ -57,6 +57,11 @@ struct BdrvDirtyBitmap {
 
 #define NOT_DONE 0x7fffffff /* used while emulated sync operation in progress */
 
+//mvmv
+//#include "block/qcow2.h"
+//#include "shelter_debug.h"
+//#include "mv_shelter_declare.inc.h"
+
 static void bdrv_dev_change_media_cb(BlockDriverState *bs, bool load);
 static BlockDriverAIOCB *bdrv_aio_readv_em(BlockDriverState *bs,
         int64_t sector_num, QEMUIOVector *qiov, int nb_sectors,
@@ -197,6 +202,9 @@ static void bdrv_io_limits_intercept(BlockDriverState *bs,
 {
     /* does this io must wait */
     bool must_wait = throttle_schedule_timer(&bs->throttle_state, is_write);
+
+    //mvmv
+    //MV_TRACE_HD1(bs);
 
     /* if must wait or any request of this type throttled queue the IO */
     if (must_wait ||
@@ -1741,6 +1749,9 @@ void bdrv_close_all(void)
 {
     BlockDriverState *bs;
 
+    //mvmv
+    //#include "mv_shelter_cleanup.inc.h"
+    
     QTAILQ_FOREACH(bs, &bdrv_states, device_list) {
         bdrv_close(bs);
     }
@@ -1748,7 +1759,7 @@ void bdrv_close_all(void)
 
 /* Check if any requests are in-flight (including throttled requests) */
 static bool bdrv_requests_pending(BlockDriverState *bs)
-{
+{    
     if (!QLIST_EMPTY(&bs->tracked_requests)) {
         return true;
     }
@@ -2261,6 +2272,13 @@ int bdrv_commit_all(void)
  */
 static void tracked_request_end(BdrvTrackedRequest *req)
 {
+    /*
+    if (strcmp(req->bs->drv->format_name, "qcow2") == 0) {
+        BDRVQcowState *state = (BDRVQcowState *) req->bs->opaque;
+        --state->pending_write;
+    }
+    */
+
     if (req->serialising) {
         req->bs->serialising_in_flight--;
     }
@@ -2277,6 +2295,13 @@ static void tracked_request_begin(BdrvTrackedRequest *req,
                                   int64_t offset,
                                   unsigned int bytes, bool is_write)
 {
+    /*
+    if (strcmp(bs->drv->format_name, "qcow2") == 0) {
+        BDRVQcowState *state = (BDRVQcowState *) bs->opaque;
+        ++state->pending_write;
+    }
+    */
+
     *req = (BdrvTrackedRequest){
         .bs = bs,
         .offset         = offset,
@@ -2362,6 +2387,9 @@ static bool coroutine_fn wait_serialising_requests(BdrvTrackedRequest *self)
     BdrvTrackedRequest *req;
     bool retry;
     bool waited = false;
+
+    //mmv
+    //MV_TRACE_HD1(bs);
 
     if (!bs->serialising_in_flight) {
         return false;
@@ -3248,41 +3276,6 @@ static int coroutine_fn bdrv_co_do_pwritev(BlockDriverState *bs,
     if (bdrv_check_byte_request(bs, offset, bytes)) {
         return -EIO;
     }
-
-    // mvmv
-#ifdef MV_IO_remove
-    if (bs->device_name[7] == '1') { // ide0-hd1
-        //printf("tracked_request_begin: bytes = %u, count_num=%d \n", bytes, 0);
-        //printf("bdrv_co_do_pwritev: offset=%lld, bytes=%u \n", (long long)offset, bytes);
-        if (bytes < 32768) { // 32KB
-           // return 0;
-           return bytes;
-        }        
-    }
-#endif // MV_IO_remove
-
-#ifdef  MV_IO_shelter
-    if (bs->device_name[7] == '1') { // ide0-hd1
-        //printf("tracked_request_begin: bytes = %u, count_num=%d \n", bytes, 0);
-        //printf("bdrv_co_do_pwritev: offset=%lld, bytes=%u \n", (long long)offset, bytes);
-        if (bytes < 32768) { // 32KB
-            static int nfs_disk = -1;
-            static void *fill = NULL; 
-            int err;
-            //printf("tracked_request_begin: bytes = %u, count_num=%d \n", bytes, 0);
-            //printf("bdrv_co_do_pwritev: offset=%lld, bytes=%u \n", (long long)offset, bytes);
-            if (nfs_disk == -1) {
-                nfs_disk = open("/mnt/nfsdisk", O_WRONLY | O_DIRECT | O_SYNC);  
-                if (nfs_disk == -1) fprintf(stderr, "Error opening device: %m\n"); 
-                //fill = malloc(sizeof(8192000));
-                fill = malloc(sizeof(32768));
-            }
-            err = write(nfs_disk, fill, bytes); 
-            if (err == -1) fprintf(stderr, "Error write to NFS: %m\n");
-            return bytes;
-        }        
-    }
-#endif // MV_IO_shelter
 
     /* throttling disk I/O */
     if (bs->io_limits_enabled) {
@@ -4256,9 +4249,13 @@ BlockDriverAIOCB *bdrv_aio_writev(BlockDriverState *bs, int64_t sector_num,
                                   BlockDriverCompletionFunc *cb, void *opaque)
 {
     trace_bdrv_aio_writev(bs, sector_num, nb_sectors, opaque);
+    
+    //mvmv
+    //MV_DEBUG_HD1(bs, "dev:%s file:%s, format:%s\n", bs->device_name, bs->filename, bs->drv->format_name);
+    //#include "mv_shelter_main.inc.h"
 
     return bdrv_co_aio_rw_vector(bs, sector_num, qiov, nb_sectors, 0,
-                                 cb, opaque, true);
+                               cb, opaque, true);
 }
 
 BlockDriverAIOCB *bdrv_aio_write_zeroes(BlockDriverState *bs,
@@ -4680,6 +4677,9 @@ BlockDriverAIOCB *bdrv_aio_discard(BlockDriverState *bs,
 void bdrv_init(void)
 {
     module_call_init(MODULE_INIT_BLOCK);
+
+    //mvmv
+    //#include "mv_shelter_init.inc.h"
 }
 
 void bdrv_init_with_whitelist(void)
@@ -5529,3 +5529,6 @@ bool bdrv_is_first_non_filter(BlockDriverState *candidate)
 
     return false;
 }
+
+//mvmv
+//#include "mv_shelter_queue.inc.h"

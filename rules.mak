@@ -42,7 +42,7 @@ expand-objs = $(strip $(sort $(filter %.o,$1)) \
 LINKPROG = $(or $(CXX),$(CC))
 
 ifeq ($(LIBTOOL),)
-LINK = $(call quiet-command,$(LINKPROG) $(QEMU_CFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
+LINK = $(call quiet-command,$(LINKPROG) $(QEMU_CFLAGS) $(CFLAGS) $(MV_IO_CFLAGS) $(LDFLAGS) -o $@ \
        $(call expand-objs,$1) $(version-obj-y) \
        $(call extract-libs,$1) $(LIBS),"  LINK  $(TARGET_DIR)$@")
 else

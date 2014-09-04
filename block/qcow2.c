@@ -990,6 +990,9 @@ static coroutine_fn int qcow2_co_readv(BlockDriverState *bs, int64_t sector_num,
     QEMUIOVector hd_qiov;
     uint8_t *cluster_data = NULL;
 
+    //mvmv
+    if (MV_IS_HD1(bs)) ++read_count;
+
     qemu_iovec_init(&hd_qiov, qiov->niov);
 
     qemu_co_mutex_lock(&s->lock);
@@ -2448,6 +2451,8 @@ static coroutine_fn int qcow2_co_commit_writev(BlockDriverState *bs,
     uint8_t *cluster_data = NULL;
     QCowL2Meta *l2meta = NULL;
 
+    //mvmv
+    //if (MV_IS_HD1(bs)) ++write_count; 
     //MV_DEBUG_HD1(bs, "%s(dev:%s, sector:%ld, count:%d)\n", __func__, bs->device_name, sector_num, remaining_sectors);
 
     trace_qcow2_writev_start_req(qemu_coroutine_self(), sector_num,

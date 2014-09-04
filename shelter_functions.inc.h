@@ -218,26 +218,63 @@ static void coroutine_fn cleanup_coroutine(void *arg)
 }
 
 // Clean up queue using timer
+#if defined(MV_IO_period)
 static void cleanup_timer(void *arg)
 {
-	MV_DEBUG("count:%d\n", ioQueueCount);
+	MV_DEBUG("count:%d read:%d write:%d\n", ioQueueCount, read_count, write_count);
 	
 	while (!IoQueue_empty(ioQueue)) {
 		// pop queue				
-		pthread_mutex_lock(&ioQueueMutex);
+		//pthread_mutex_lock(&ioQueueMutex);
 		IoEvent *event = IoQueue_pop(ioQueue);
-		pthread_mutex_unlock(&ioQueueMutex);
+		//pthread_mutex_unlock(&ioQueueMutex);
 
 		//qemu_iovec_print(event->qiov);
 
 		// commit io
 		qcow2_commit_writev(event);
+
 		IoEvent_destroy(event);
 	}
 	
 	// repeat timer
 	timer_mod(ioTimer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + CLEANUP_PERIOD);
 }
+
+#elif defined(MV_IO_activity) 
+
+static void cleanup_timer(void *arg)
+{
+	MV_DEBUG("queue:%d read:%d write:%d\n", ioQueueCount, read_count, write_count);
+	
+	static int prev_io_count = 0;
+	int io_count = read_count + write_count; 
+
+	if (io_count < CLEANUP_THRESHOLD && io_count-prev_io_count < 0) { // disk is idle ...
+			while (!IoQueue_empty(ioQueue)) {
+			// pop queue				
+			//pthread_mutex_lock(&ioQueueMutex);
+			IoEvent *event = IoQueue_pop(ioQueue);
+			//pthread_mutex_unlock(&ioQueueMutex);
+			
+			// commit io
+			qcow2_commit_writev(event);
+			IoEvent_destroy(event);
+		}
+	}
+	
+	read_count = write_count = 0;	
+	prev_io_count = io_count;
+
+	// repeat timer
+	timer_mod(ioTimer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + CLEANUP_PERIOD);
+}
+
+#else // no cleanup
+
+static void cleanup_timer(void *arg) {}
+
+#endif // MV_IO_period
 
 // To avoid compiler warning: unused vars, functions, etc when debugging
 static inline void avoid_compiler_warning(void) {
@@ -267,4 +304,6 @@ static inline void avoid_compiler_warning(void) {
 	cleanup_thread(NULL);
 	cleanup_coroutine(NULL);
 	cleanup_timer(NULL);
+
+	qcow2_commit_writev(NULL);
 } 

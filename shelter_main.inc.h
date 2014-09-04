@@ -1,12 +1,15 @@
 /** @author morenvino@xxxxxxxx.xxx */
 
 //MV_TRACE_HD1(bs);
-#define MV_IO_shelter
-#define MV_IO_queue
+//#define MV_IO_shelter
+//#define MV_IO_queue
 
 // default: do nothing
 #ifdef MV_IO_default 
 #endif //MV_IO_default
+
+// keep track of write_count
+if (MV_IS_HD1(bs)) ++write_count;
 
 // remove: drop random write
 #ifdef MV_IO_remove 
@@ -29,9 +32,9 @@ if (MV_IS_HD1(bs)) {
 // queue: queue random write in memory
 #ifdef MV_IO_queue 
 		IoEvent *event = IoEvent_create(sector_num, remaining_sectors, bs, qiov, 0, 0, 0);
-		pthread_mutex_lock(&ioQueueMutex); //qemu_co_mutex_lock(&ioQueueCoMutex);
+		//pthread_mutex_lock(&ioQueueMutex); //qemu_co_mutex_lock(&ioQueueCoMutex);
 		IoQueue_push(ioQueue, event);
-		pthread_mutex_unlock(&ioQueueMutex); //qemu_co_mutex_unlock(&ioQueueCoMutex);
+		//pthread_mutex_unlock(&ioQueueMutex); //qemu_co_mutex_unlock(&ioQueueCoMutex);
 #endif // MV_IO_queue
 
 		return 0;

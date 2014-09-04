@@ -26,10 +26,10 @@
 // Trace function
 #if MV_TRACE_ENABLE
 
-#define MV_TRACE()          printf("%s()\n", __func__)
+#define MV_TRACE()          printf("[%s]\n", __func__)
 #define MV_TRACE_HD1(bs)    if (MV_SHOULD_TRACE(bs)) MV_TRACE()
 
-#define MV_DEBUG(fmt, ...)         printf("%s(): " fmt, __func__, ##__VA_ARGS__) 
+#define MV_DEBUG(fmt, ...)         printf("[%s] " fmt, __func__, ##__VA_ARGS__) 
 #define MV_DEBUG_HD1(bs, fmt, ...) if (MV_SHOULD_TRACE(bs)) MV_DEBUG(fmt, ##__VA_ARGS__)
 
 #else // not MV_TRACE_ENABLE

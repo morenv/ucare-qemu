@@ -53,7 +53,11 @@ static pthread_mutex_t ioQueueMutex = PTHREAD_MUTEX_INITIALIZER;
 //static CoMutex ioQueueCoMutex;
 
 // Cleanup Timer
-static QEMUTimer *ioTimer;
+static QEMUTimer *ioTimer = NULL;
+
+// Keep track of number i/o during cleanup period
+static int read_count = 0;
+static int write_count = 0;
 
 /* ===========================================================================
  * Function

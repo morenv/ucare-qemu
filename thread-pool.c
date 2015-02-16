@@ -79,6 +79,8 @@ struct ThreadPool {
     bool stopping;
 };
 
+#include "shelter_debug.h"
+
 static void *worker_thread(void *opaque)
 {
     ThreadPool *pool = opaque;
@@ -120,6 +122,8 @@ static void *worker_thread(void *opaque)
         }
 
         event_notifier_set(&pool->notifier);
+
+        //MV_DEBUG("\n\n **** **** \n\n");
     }
 
     pool->cur_threads--;

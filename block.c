@@ -59,7 +59,7 @@ struct BdrvDirtyBitmap {
 
 //mvmv
 //#include "block/qcow2.h"
-//#include "shelter_debug.h"
+#include "shelter_debug.h"
 //#include "mv_shelter_declare.inc.h"
 
 static void bdrv_dev_change_media_cb(BlockDriverState *bs, bool load);
@@ -2278,6 +2278,15 @@ static void tracked_request_end(BdrvTrackedRequest *req)
         --state->pending_write;
     }
     */
+    /*
+    int count = 0;
+    BdrvTrackedRequest *r;
+    QLIST_FOREACH(r, &req->bs->tracked_requests, list) {
+        ++count;
+    }
+
+    if (req->is_write) MV_DEBUG_HD1(req->bs, "count:%d bytes:%d format:%s\n", count, req->bytes, req->bs->drv->format_name);
+    */
 
     if (req->serialising) {
         req->bs->serialising_in_flight--;
@@ -2300,6 +2309,14 @@ static void tracked_request_begin(BdrvTrackedRequest *req,
         BDRVQcowState *state = (BDRVQcowState *) bs->opaque;
         ++state->pending_write;
     }
+    */
+    /*
+    int count = 0;
+    BdrvTrackedRequest *r;
+    QLIST_FOREACH(r, &bs->tracked_requests, list) {
+        ++count;
+    }
+    if (is_write) MV_DEBUG_HD1(bs, "count:%d bytes:%d format:%s\n", count, bytes, bs->drv->format_name);
     */
 
     *req = (BdrvTrackedRequest){
@@ -3277,6 +3294,9 @@ static int coroutine_fn bdrv_co_do_pwritev(BlockDriverState *bs,
         return -EIO;
     }
 
+    // mvmv
+    //MV_DEBUG_HD1(bs, "dev:%s file:%s, format:%s\n", bs->device_name, bs->filename, bs->drv->format_name);
+
     /* throttling disk I/O */
     if (bs->io_limits_enabled) {
         bdrv_io_limits_intercept(bs, bytes, true);
@@ -4251,8 +4271,20 @@ BlockDriverAIOCB *bdrv_aio_writev(BlockDriverState *bs, int64_t sector_num,
     trace_bdrv_aio_writev(bs, sector_num, nb_sectors, opaque);
     
     //mvmv
+    //MV_DEBUG("dev:%s file:%s, format:%s\n", bs->device_name, bs->filename, bs->drv->format_name);
     //MV_DEBUG_HD1(bs, "dev:%s file:%s, format:%s\n", bs->device_name, bs->filename, bs->drv->format_name);
+    //printf("dev:%s file:%s, format:%s\n", bs->device_name, bs->filename, bs->drv->format_name);
     //#include "mv_shelter_main.inc.h"
+    /*
+    if (MV_IS_HD1(bs)) {
+        int count = 0;
+        BdrvTrackedRequest *r;
+        QLIST_FOREACH(r, &bs->tracked_requests, list) {
+            ++count;
+        }
+        MV_DEBUG("count:%d\n", count);
+    }
+    */
 
     return bdrv_co_aio_rw_vector(bs, sector_num, qiov, nb_sectors, 0,
                                cb, opaque, true);

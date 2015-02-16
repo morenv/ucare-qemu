@@ -135,6 +135,8 @@ static const AIOCBInfo laio_aiocb_info = {
     .cancel             = laio_cancel,
 };
 
+#include "shelter_debug.h"
+
 BlockDriverAIOCB *laio_submit(BlockDriverState *bs, void *aio_ctx, int fd,
         int64_t sector_num, QEMUIOVector *qiov, int nb_sectors,
         BlockDriverCompletionFunc *cb, void *opaque, int type)
@@ -155,6 +157,7 @@ BlockDriverAIOCB *laio_submit(BlockDriverState *bs, void *aio_ctx, int fd,
 
     switch (type) {
     case QEMU_AIO_WRITE:
+        MV_DEBUG("dev:%s file:%s, format:%s\n", bs->device_name, bs->filename, bs->drv->format_name);
         io_prep_pwritev(iocbs, fd, qiov->iov, qiov->niov, offset);
 	break;
     case QEMU_AIO_READ:

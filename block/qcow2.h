@@ -262,6 +262,10 @@ typedef struct BDRVQcowState {
     QLIST_HEAD(, Qcow2UnknownHeaderExtension) unknown_header_ext;
     QTAILQ_HEAD (, Qcow2DiscardRegion) discards;
     bool cache_discards;
+
+    //mvmv
+    int pending_write;
+
 } BDRVQcowState;
 
 /* XXX: use std qcow open function ? */

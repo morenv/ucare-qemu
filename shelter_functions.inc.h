@@ -98,7 +98,8 @@ static IoEvent * IoEvent_create(size_t blkno, size_t blkcount,
 		event->flags = flags;
 		event->opaque = opaque;
 		event->cb = cb;
-		event->qiov = qemu_iovec_create_copy(qiov);
+		//event->qiov = qemu_iovec_create_copy(qiov);
+		event->qiov = qiov;
 		event->ret = NOT_DONE;
 	}
 	return event;
@@ -110,7 +111,7 @@ static void IoEvent_destroy(IoEvent *event)
 	event->blkno = 0;
 	event->blkcount = 0;
 	event->bs = NULL;
-	qemu_iovec_destroy_copy(event->qiov);
+	if (event->qiov) qemu_iovec_destroy_copy(event->qiov);
 	event->qiov = NULL;
 	event->ret = 0;
 	free(event);
@@ -139,10 +140,17 @@ static inline int IoQueue_empty(IoQueue *queue)
 	return STAILQ_EMPTY(queue);
 }
 
+// Return true if queue is not empty
+static inline int IoQueue_has_item(IoQueue *queue) 
+{
+	return !STAILQ_EMPTY(queue);
+}
+
 // Push item into queue
 static inline void IoQueue_push(IoQueue *queue, IoEvent *item) 
 {
 	++ioQueueCount;
+	ioQueueBlock += item->blkcount;
 	STAILQ_INSERT_TAIL(queue, item, entries);
 }
 
@@ -151,19 +159,24 @@ static inline IoEvent * IoQueue_pop(IoQueue *queue) {
 	IoEvent *item = STAILQ_FIRST(queue);
 	STAILQ_REMOVE_HEAD(queue, entries);
 	--ioQueueCount;
+	ioQueueBlock -= item->blkcount;
 	return item;
 }
 
 // Entry point to coroutine commit_writev()  
+#if SHELTERING_ON_QCOW2
 static void coroutine_fn qcow2_co_commit_entry(void *opaque)
 {
 	IoEvent *io = opaque;
 	io->ret = qcow2_co_commit_writev(io->bs, io->blkno, io->blkcount, io->qiov);
 }
+#endif //SHELTERING_ON_QCOW2
 
 // Run commit_writev() from non-coroutine
 static int qcow2_commit_writev(IoEvent *io)
 {
+	// for qcow2
+#if SHELTERING_ON_QCOW2
 	Coroutine *co;
 	
 	if (qemu_in_coroutine()) {
@@ -176,25 +189,56 @@ static int qcow2_commit_writev(IoEvent *io)
 		}
 	}
 	return io->ret;
+#endif //SHELTERING_ON_QCOW2
+	
+	// for raw-posix
+	return 0;
 }
+
 
 // Clean up queue using thread
 static void * cleanup_thread(void *arg)
 {
+#ifdef MV_IO_cleanup
+	int tmp_disk = open("/data/ubuntu-kvm/temp_disk", O_WRONLY | O_DIRECT | O_SYNC);
+	if (tmp_disk == -1) fprintf(stderr, "Error opening tmp disk: %m\n"); 
+
 	while (1) {
-		MV_DEBUG("count:%d\n", ioQueueCount);
-		// pop queue
-		while (!IoQueue_empty(ioQueue)) {
-			//pthread_mutex_lock(&ioQueueMutex);
-			//IoEvent *event = IoQueue_pop(ioQueue);
-			//pthread_mutex_unlock(&ioQueueMutex);
+		MV_DEBUG("queue:%d count:%d size:%ld\n", ioQueueCount, io_count, io_size);
+		//cleanup_print();
+
+		int commit_count = 0;
+		int to_commit_count = ioQueueCount;
+		while (to_commit_count != 0 && IoQueue_has_item(ioQueue) && commit_count < CLEANUP_BATCH_SIZE) {
+			//printf(".");
+			// pop queue				
+			pthread_mutex_lock(&ioQueueMutex);
+			IoEvent *event = IoQueue_pop(ioQueue);
+			pthread_mutex_unlock(&ioQueueMutex);
+			if (event == NULL) {
+				MV_DEBUG("queue has item but fail to pop\n");
+				continue;
+			}
+			
 			//qemu_iovec_print(event->qiov);
 
+			// commit io
 			//qcow2_commit_writev(event);
-			//IoEvent_destroy(event);
+			//MV_DEBUG("writing %ld %ld\n", event->blkcount, event->blkno);
+			int len = pwrite(tmp_disk, tmp_fill, event->blkcount, event->blkno);
+			if (len == -1) fprintf(stderr, "Error writing to disk: %m\n");
+
+			++commit_count;
+			--to_commit_count;
+
+			//MV_DEBUG("before destroy\n");
+			IoEvent_destroy(event);
+			//MV_DEBUG("after destroy\n");
 		}
+
 		sleep(CLEANUP_PERIOD/1000);
 	}
+#endif
 	return 0;
 }
 
@@ -217,14 +261,39 @@ static void coroutine_fn cleanup_coroutine(void *arg)
 	}
 }
 
+#ifdef MV_IO_cleanup
+
+// log cleanup queue status
+static inline void cleanup_print(void) {
+	//if (ioQueueCount != 0) 
+	fprintf(log_file, "%d,%ld,%d\n", ioQueueCount, ioQueueBlock, cleanup_count);
+	fflush(log_file);
+} 
+
+static void log_timer(void *arg) {
+	//cleanup_print();
+
+	// repeat timer
+	//timer_mod(logTimer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + LOG_PERIOD);
+}
+
+#endif //MV_IO_cleanup
+
 // Clean up queue using timer
 #if defined(MV_IO_period)
 static void cleanup_timer(void *arg)
 {
-	MV_DEBUG("count:%d read:%d write:%d\n", ioQueueCount, read_count, write_count);
+	MV_DEBUG("queue:%d count:%d size:%ld\n", ioQueueCount, io_count, io_size);
+	cleanup_print();
+
+	int commit_count = 0;
+	//while (!IoQueue_empty(ioQueue)) {
 	
-	while (!IoQueue_empty(ioQueue)) {
-		// pop queue				
+	if (IoQueue_has_item(ioQueue))
+		++cleanup_count;
+
+	while (IoQueue_has_item(ioQueue) && commit_count < CLEANUP_BATCH_SIZE) {
+			// pop queue				
 		//pthread_mutex_lock(&ioQueueMutex);
 		IoEvent *event = IoQueue_pop(ioQueue);
 		//pthread_mutex_unlock(&ioQueueMutex);
@@ -233,6 +302,7 @@ static void cleanup_timer(void *arg)
 
 		// commit io
 		qcow2_commit_writev(event);
+		++commit_count;
 
 		IoEvent_destroy(event);
 	}
@@ -243,15 +313,23 @@ static void cleanup_timer(void *arg)
 
 #elif defined(MV_IO_activity) 
 
-static void cleanup_timer(void *arg)
+static inline bool should_cleanup(void) 
 {
-	MV_DEBUG("queue:%d read:%d write:%d\n", ioQueueCount, read_count, write_count);
-	
-	static int prev_io_count = 0;
-	int io_count = read_count + write_count; 
+	return io_count < CLEANUP_COUNT_THRESHOLD && io_size < CLEANUP_SIZE_THRESHOLD;
+}
 
-	if (io_count < CLEANUP_THRESHOLD && io_count-prev_io_count < 0) { // disk is idle ...
-			while (!IoQueue_empty(ioQueue)) {
+static void cleanup_timer(void *arg)
+{	
+	MV_DEBUG("queue:%d count:%d size:%ld\n", ioQueueCount, io_count, io_size);
+	cleanup_print();
+
+	if (should_cleanup()) { // disk is idle or queue is full ...
+		int commit_count = 0;
+		
+		if (IoQueue_has_item(ioQueue))
+			++cleanup_count;
+
+		while (IoQueue_has_item(ioQueue) && commit_count < CLEANUP_BATCH_SIZE) {
 			// pop queue				
 			//pthread_mutex_lock(&ioQueueMutex);
 			IoEvent *event = IoQueue_pop(ioQueue);
@@ -259,12 +337,13 @@ static void cleanup_timer(void *arg)
 			
 			// commit io
 			qcow2_commit_writev(event);
+			++commit_count;
+
 			IoEvent_destroy(event);
 		}
 	}
-	
-	read_count = write_count = 0;	
-	prev_io_count = io_count;
+
+	io_count = io_size = 0; // reset io counter
 
 	// repeat timer
 	timer_mod(ioTimer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + CLEANUP_PERIOD);
@@ -273,6 +352,7 @@ static void cleanup_timer(void *arg)
 #else // no cleanup
 
 static void cleanup_timer(void *arg) {}
+static void log_timer(void *arg) {}
 
 #endif // MV_IO_period
 
@@ -285,6 +365,13 @@ static inline void avoid_compiler_warning(void) {
 	ioQueueCount = ioQueueCount;
 	ioQueueMutex = ioQueueMutex;
 	ioTimer = ioTimer;
+	logTimer = logTimer;
+	log_file = log_file;
+	cleanup_count = cleanup_count;
+	tmp_fill = tmp_fill;
+
+	io_size = io_size;
+	io_count = io_count;
 
 	qemu_iovec_create_copy(NULL);
 	qemu_iovec_destroy_copy(NULL);
@@ -304,6 +391,7 @@ static inline void avoid_compiler_warning(void) {
 	cleanup_thread(NULL);
 	cleanup_coroutine(NULL);
 	cleanup_timer(NULL);
+	log_timer(NULL);
 
 	qcow2_commit_writev(NULL);
 } 

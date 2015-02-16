@@ -365,6 +365,9 @@ struct BlockDriverState {
     BlockJob *job;
 
     QDict *options;
+
+    //mvmv
+    bool to_shelter;
 };
 
 int get_tmp_filename(char *filename, int size);

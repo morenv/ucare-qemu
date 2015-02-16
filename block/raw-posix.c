@@ -89,6 +89,10 @@
 #include <xfs/xfs.h>
 #endif
 
+//mvmv
+#include "shelter_debug.h"
+#include "shelter_declare.inc.h"
+
 //#define DEBUG_FLOPPY
 
 //#define DEBUG_BLOCK
@@ -457,6 +461,11 @@ static int raw_open(BlockDriverState *bs, QDict *options, int flags,
     Error *local_err = NULL;
     int ret;
 
+    //mvmv
+    #if SHELTERING_ON_RAW
+    #include "../shelter_init.inc.h"
+    #endif //SHELTERING_ON_RAW
+
     s->type = FTYPE_FILE;
     ret = raw_open_common(bs, options, flags, 0, &local_err);
     if (local_err) {
@@ -653,16 +662,22 @@ static ssize_t handle_aiocb_rw_vector(RawPosixAIOData *aiocb)
     ssize_t len;
 
     do {
-        if (aiocb->aio_type & QEMU_AIO_WRITE)
+        if (aiocb->aio_type & QEMU_AIO_WRITE) {
+            //mvmv
+            //MV_DEBUG_HD1(aiocb->bs, "niov:%d offset:%ld\n", aiocb->aio_niov, aiocb->aio_offset);
+            #if SHELTERING_ON_RAW
+            #include "../shelter_main_raw.inc.h"
+            #endif //SHELTERING_ON_RAW
             len = qemu_pwritev(aiocb->aio_fildes,
                                aiocb->aio_iov,
                                aiocb->aio_niov,
                                aiocb->aio_offset);
-         else
+        } else {
             len = qemu_preadv(aiocb->aio_fildes,
                               aiocb->aio_iov,
                               aiocb->aio_niov,
                               aiocb->aio_offset);
+        }
     } while (len == -1 && errno == EINTR);
 
     if (len == -1) {
@@ -684,6 +699,12 @@ static ssize_t handle_aiocb_rw_linear(RawPosixAIOData *aiocb, char *buf)
 
     while (offset < aiocb->aio_nbytes) {
         if (aiocb->aio_type & QEMU_AIO_WRITE) {
+            //mvmv
+            //MV_DEBUG_HD1(aiocb->bs, "shelter:%d dev:%s file:%s, format:%s\n", aiocb->bs->to_shelter, aiocb->bs->device_name, aiocb->bs->filename, aiocb->bs->drv->format_name);
+            //MV_DEBUG_HD1(aiocb->bs, "niov:%d offset:%ld\n", aiocb->aio_niov, aiocb->aio_offset);
+            #if SHELTERING_ON_RAW
+            #include "../shelter_main_raw.inc.h"
+            #endif //SHELTERING_ON_RAW
             len = pwrite(aiocb->aio_fildes,
                          (const char *)buf + offset,
                          aiocb->aio_nbytes - offset,
@@ -713,6 +734,8 @@ static ssize_t handle_aiocb_rw(RawPosixAIOData *aiocb)
     ssize_t nbytes;
     char *buf;
 
+    //MV_DEBUG_HD1(aiocb->bs, "dev:%s file:%s, format:%s\n", aiocb->bs->device_name, aiocb->bs->filename, aiocb->bs->drv->format_name);
+    //MV_DEBUG_HD1(aiocb->bs, "niov:%d nbytes:%ld\n", aiocb->aio_niov, aiocb->aio_nbytes);
     if (!(aiocb->aio_type & QEMU_AIO_MISALIGNED)) {
         /*
          * If there is just a single buffer, and it is properly aligned
@@ -955,6 +978,8 @@ static int paio_submit_co(BlockDriverState *bs, int fd,
     RawPosixAIOData *acb = g_slice_new(RawPosixAIOData);
     ThreadPool *pool;
 
+    //MV_DEBUG_HD1(bs, "dev:%s file:%s, format:%s\n", bs->device_name, bs->filename, bs->drv->format_name);
+        
     acb->bs = bs;
     acb->aio_type = type;
     acb->aio_fildes = fd;
@@ -977,6 +1002,8 @@ static BlockDriverAIOCB *paio_submit(BlockDriverState *bs, int fd,
 {
     RawPosixAIOData *acb = g_slice_new(RawPosixAIOData);
     ThreadPool *pool;
+
+    //MV_DEBUG_HD1(bs, "dev:%s file:%s, format:%s\n", bs->device_name, bs->filename, bs->drv->format_name);
 
     acb->bs = bs;
     acb->aio_type = type;
@@ -1031,10 +1058,15 @@ static BlockDriverAIOCB *raw_aio_readv(BlockDriverState *bs,
                           cb, opaque, QEMU_AIO_READ);
 }
 
+
 static BlockDriverAIOCB *raw_aio_writev(BlockDriverState *bs,
         int64_t sector_num, QEMUIOVector *qiov, int nb_sectors,
         BlockDriverCompletionFunc *cb, void *opaque)
 {
+    //mvmv
+    //MV_DEBUG_HD1(bs, "dev:%s file:%s, format:%s\n", bs->device_name, bs->filename, bs->drv->format_name);
+    //MV_TRACE_HD1(bs);
+
     return raw_aio_submit(bs, sector_num, qiov, nb_sectors,
                           cb, opaque, QEMU_AIO_WRITE);
 }
@@ -1053,6 +1085,12 @@ static BlockDriverAIOCB *raw_aio_flush(BlockDriverState *bs,
 static void raw_close(BlockDriverState *bs)
 {
     BDRVRawState *s = bs->opaque;
+
+    //mvmv
+    #if SHELTERING_ON_RAW
+    #include "../shelter_cleanup.inc.h"
+    #endif //SHELTERING_ON_RAW
+
     if (s->fd >= 0) {
         qemu_close(s->fd);
         s->fd = -1;
@@ -2305,3 +2343,8 @@ static void bdrv_file_init(void)
 }
 
 block_init(bdrv_file_init);
+
+// mvmv
+#if SHELTERING_ON_RAW
+#include "../shelter_functions.inc.h"
+#endif //SHELTERING_ON_RAW

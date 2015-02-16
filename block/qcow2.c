@@ -59,7 +59,10 @@ typedef struct {
 #define  QCOW2_EXT_MAGIC_FEATURE_TABLE 0x6803f857
 
 //mvmv
+#include "../shelter_debug.h"
+#if SHELTERING_ON_QCOW2
 #include "../shelter_declare.inc.h"
+#endif //SHELTERING_ON_QCOW2
 
 static int qcow2_probe(const uint8_t *buf, int buf_size, const char *filename)
 {
@@ -461,8 +464,10 @@ static int qcow2_open(BlockDriverState *bs, QDict *options, int flags,
     int overlap_check_template = 0;
 
     // mvmv
+    #if SHELTERING_ON_QCOW2
     #include "../shelter_init.inc.h"
     //s->pending_write = 0;
+    #endif // SHELTERING_ON_QCOW2
 
     ret = bdrv_pread(bs->file, 0, &header, sizeof(header));
     if (ret < 0) {
@@ -991,7 +996,13 @@ static coroutine_fn int qcow2_co_readv(BlockDriverState *bs, int64_t sector_num,
     uint8_t *cluster_data = NULL;
 
     //mvmv
-    if (MV_IS_HD1(bs)) ++read_count;
+    #if SHELTERING_ON_QCOW2
+    if (MV_IS_HD1(bs)) { // keep track of read count
+        /++io_count; 
+        io_size += remaining_sectors;
+    }
+    #endif //SHELTERING_ON_QCOW2
+
 
     qemu_iovec_init(&hd_qiov, qiov->niov);
 
@@ -1134,7 +1145,12 @@ static coroutine_fn int qcow2_co_writev(BlockDriverState *bs,
     QCowL2Meta *l2meta = NULL;
 
     //mvmv
+    #if SHELTERING_ON_QCOW2
     #include "../shelter_main.inc.h"
+    #endif //SHELTERING_ON_QCOW2
+    //bs->to_shelter = true;
+    ///MV_DEBUG_HD1(bs, "dev:%s file:%s, format:%s\n", bs->device_name, bs->filename, bs->drv->format_name);
+
 
     trace_qcow2_writev_start_req(qemu_coroutine_self(), sector_num,
                                  remaining_sectors);
@@ -1264,7 +1280,9 @@ static void qcow2_close(BlockDriverState *bs)
     BDRVQcowState *s = bs->opaque;
 
     //mvmv
+    #if SHELTERING_ON_QCOW2
     #include "../shelter_cleanup.inc.h"
+    #endif //SHELTERING_ON_QCOW2
 
     g_free(s->l1_table);
     /* else pre-write overlap checks in cache_destroy may crash */
@@ -2436,6 +2454,7 @@ block_init(bdrv_qcow2_init);
 
 //mvmv
 // copy of qcow2_co_writev() without the sheltering logic
+#if SHELTERING_ON_QCOW2
 static coroutine_fn int qcow2_co_commit_writev(BlockDriverState *bs,
                                                int64_t sector_num,
                                                int remaining_sectors,
@@ -2576,6 +2595,9 @@ fail:
 
     return ret;
 }
+#endif //SHELTERING_ON_QCOW2
 
 // mvmv
+#if SHELTERING_ON_QCOW2
 #include "../shelter_functions.inc.h"
+#endif //SHELTERING_ON_QCOW2

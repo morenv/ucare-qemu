@@ -43,10 +43,12 @@ typedef STAILQ_HEAD(IoQueue, IoEvent) IoQueue;
 // Global NFS disk 
 static int nfs_disk = -1;
 static void *nfs_fill = NULL; 
+static void *tmp_fill = NULL; 
 
 // A global queue of IO Events
 static IoQueue *ioQueue = NULL;
 static int ioQueueCount = 0;
+static size_t ioQueueBlock = 0;
 
 // Mutex for IoQueue
 static pthread_mutex_t ioQueueMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -54,10 +56,15 @@ static pthread_mutex_t ioQueueMutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Cleanup Timer
 static QEMUTimer *ioTimer = NULL;
+static QEMUTimer *logTimer = NULL;
 
 // Keep track of number i/o during cleanup period
-static int read_count = 0;
-static int write_count = 0;
+static int io_count = 0;
+static size_t io_size = 0;
+static int cleanup_count = 0;
+
+// Log file
+static FILE *log_file = NULL; 
 
 /* ===========================================================================
  * Function
@@ -92,17 +99,25 @@ static void IoQueue_destroy(IoQueue *queue);
 // Return true if queue is empty
 static inline int IoQueue_empty(IoQueue *queue); 
 
+// Return true if queue is not empty
+static inline int IoQueue_has_item(IoQueue *queue) ;
+
 // Push item into queue
 static inline void IoQueue_push(IoQueue *queue, IoEvent *item); 
 
 // Pop item from queue
 static inline IoEvent * IoQueue_pop(IoQueue *queue);
 
+#if SHELTERING_ON_QCOW2
+
 // Entry point to coroutine commit_writev()  
 static void coroutine_fn qcow2_co_commit_entry(void *opaque);
 
 // Run commit_writev() from non-coroutine
 static int qcow2_commit_writev(IoEvent *io);
+
+#endif //SHELTERING_ON_QCOW2
+
 
 // Clean up queue using thread
 static void * cleanup_thread(void *arg);
@@ -112,3 +127,5 @@ static void coroutine_fn cleanup_coroutine(void *arg);
 
 // Clean up queue using timer
 static void cleanup_timer(void *arg);
+
+static void log_timer(void *arg);
